@@ -20,7 +20,6 @@ import numpy as np
 import torchvision.transforms as transforms
 import torch
 from flownet2 import flow_utils
-from scipy import ndimage, misc
 from numpy import linalg as LA
 
 def get_data_loader(cf, no_flo = False):
