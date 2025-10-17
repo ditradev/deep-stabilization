@@ -4,14 +4,17 @@
 
 This repository contains the Pytorch implementation of our method in the paper "Deep Online Fused Video Stabilization".
 
-## Environment Setting
-Python version >= 3.6
-Pytorch with CUDA >= 1.0.0 (guide is [here](https://pytorch.org/get-started/locally/))
-Install other used packages:
+## Environment
+
+* Python 3.10 or newer
+* [PyTorch 2.2+](https://pytorch.org/get-started/locally/) with a CUDA build that matches your driver
+* Project dependencies from the repository root:
+
+```bash
+pip install -r requirements.txt
 ```
-cd dvs
-pip install -r requirements.txt --ignore-installed
-```
+
+The consolidated requirements capture the libraries used across training and inference (NumPy/SciPy, OpenCV with contrib modules, Pillow/ImageIO, Matplotlib, ffmpeg-python, PyYAML/pytz, tensorboardX, tqdm, and the PyTorch stack).
 
 ## Data Preparation
 Download sample video [here](https://drive.google.com/file/d/1PpF3-6BbQKy9fldjIfwa5AlbtQflx3sG/view?usp=sharing).
@@ -26,9 +29,14 @@ The **gyro/OIS curve visualization** can be found at *dvs/video/s_114_outdoor_ru
 ## FlowNet2 Preparation
 Note, we provide optical flow result of one test video in our Data Preparation. If you would like to generate them for all test videos, please follow [FlowNet2 official website](https://github.com/NVIDIA/flownet2-pytorch) and guide below. Otherwise, you can skip this section. 
 
-Note, FlowNet2 installation is tricky. Please use Python=3.6 and Pytorch=1.0.0. More details are [here](https://github.com/NVIDIA/flownet2-pytorch/issues/156) or contact us for any questions.
+FlowNet2 still builds custom CUDA extensions.  The upstream project documents additional troubleshooting tips [here](https://github.com/NVIDIA/flownet2-pytorch/issues/156); follow them if you run into compiler or driver errors.
 
-Download FlowNet2 model *FlowNet2_checkpoint.pth.tar* [here](https://drive.google.com/file/d/1hF8vS6YeHkx3j2pfCeQqqZGwA_PJq_Da/view).  Move it under folder *dvs/flownet2*.
+Download FlowNet2 model *FlowNet2_checkpoint.pth.tar* [here](https://drive.google.com/file/d/1hF8vS6YeHkx3j2pfCeQqqZGwA_PJq_Da/view).  Move it under folder *dvs/flownet2*.  You can automate this step with [gdown](https://github.com/wkentaro/gdown):
+
+```bash
+pip install --upgrade gdown  # optional helper
+gdown 1hF8vS6YeHkx3j2pfCeQqqZGwA_PJq_Da -O dvs/flownet2/FlowNet2_checkpoint.pth.tar
+```
 ```
 python warp/read_write.py # video2frames
 cd flownet2

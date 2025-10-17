@@ -1,0 +1,17 @@
+torch>=2.2
+torchvision>=0.17
+# Optional audio components install cleanly alongside torch 2.2 wheels
+# and simplify CUDA compatibility across platforms.
+torchaudio>=2.2
+colorama>=0.4.6
+ffmpeg-python>=0.2.0
+imageio>=2.31
+matplotlib>=3.7
+numpy>=1.24
+opencv-contrib-python>=4.9
+Pillow>=10.0
+pytz>=2023.3
+PyYAML>=6.0
+scipy>=1.10
+tensorboardX>=2.6
+tqdm>=4.65
