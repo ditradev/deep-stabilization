@@ -187,7 +187,8 @@ def visual_result(cf, data, video_name, virtual_queue, virtual_queue2 = None, co
 def main(args = None):
     config_file = args.config
     dir_path = args.dir_path
-    cf = yaml.load(open(config_file, 'r'))
+    with open(config_file, 'r') as f:
+        cf = yaml.safe_load(f)
 
     USE_CUDA = cf['data']["use_cuda"]
 
