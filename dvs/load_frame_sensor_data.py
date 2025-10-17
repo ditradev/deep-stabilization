@@ -4,7 +4,6 @@ import sys
 import torch
 import torchvision
 import torch.nn as nn
-from torch.autograd import Variable
 
 import time
 import yaml
@@ -17,18 +16,19 @@ import datetime
 import copy
 from util import make_dir, get_optimizer, norm_flow
 from gyro import (
-    get_grid, 
-    get_rotations, 
-    visual_rotation, 
-    GetGyroAtTimeStamp, 
-    torch_ConvertQuaternionToAxisAngle, 
+    get_grid,
+    get_rotations,
+    visual_rotation,
+    GetGyroAtTimeStamp,
+    torch_ConvertQuaternionToAxisAngle,
     torch_ConvertAxisAngleToQuaternion,
     torch_QuaternionProduct,
     get_static
     )
 from warp import warp_video
+from device import get_device
 
-def run(loader, cf, USE_CUDA=True):
+def run(loader, cf, device):
     number_virtual, number_real = cf['data']["number_virtual"], cf['data']["number_real"]
     for i, data in enumerate(loader, 0):
         # get the inputs; data is a list of [inputs, labels]
@@ -45,27 +45,25 @@ def run(loader, cf, USE_CUDA=True):
 
         for j in range(step):
             virtual_inputs, vt_1 = loader.dataset.get_virtual_data(
-                virtual_queue, real_queue_idx, times[:, j], times[:, j+1], times[:, 0], batch_size, number_virtual, real_postion[:,j]) 
+                virtual_queue, real_queue_idx, times[:, j], times[:, j+1], times[:, 0], batch_size, number_virtual, real_postion[:,j])
             real_inputs_step = real_inputs[:,j,:]
-            if USE_CUDA:
-                real_inputs_step = real_inputs_step.cuda()
-                virtual_inputs = virtual_inputs.cuda()
-                real_postion_anchor = real_postion[:,j].cuda()
+            real_inputs_step = real_inputs_step.to(device)
+            virtual_inputs = virtual_inputs.to(device)
+            real_postion_anchor = real_postion[:, j].to(device)
 
             out = real_inputs_step[:,40:44]
-            
+
             virtual_position = virtual_inputs[:, -4:]
             pos = torch_QuaternionProduct(virtual_position, real_postion_anchor)
 
             out = torch_QuaternionProduct(out, pos)
 
-            if USE_CUDA:
-                out = out.cpu().detach().numpy() 
+            out = out.detach().cpu().numpy()
 
             virtual_queue = loader.dataset.update_virtual_queue(batch_size, virtual_queue, out, times[:,j+1])
     return np.squeeze(virtual_queue, axis=0)
 
-def inference(cf, data_path, USE_CUDA):
+def inference(cf, data_path, device):
     print("-----------Load Dataset----------")
     test_loader = get_inference_data_loader(cf, data_path)
     data = test_loader.dataset.data[0]
@@ -73,7 +71,7 @@ def inference(cf, data_path, USE_CUDA):
     test_loader.dataset.static_options = get_static(ratio = 0)
 
     start_time = time.time()
-    virtual_queue = run(test_loader, cf, USE_CUDA=USE_CUDA)
+    virtual_queue = run(test_loader, cf, device)
 
     virtual_data = np.zeros((1,5))
     virtual_data[:,1:] = virtual_queue[0, 1:]
@@ -101,6 +99,7 @@ def main(args = None):
         cf = yaml.safe_load(f)
     
     USE_CUDA = cf['data']["use_cuda"]
+    device = get_device(USE_CUDA)
 
     checkpoints_dir = cf['data']['checkpoints_dir']
     checkpoints_dir = make_dir(checkpoints_dir, cf)
@@ -108,7 +107,7 @@ def main(args = None):
     data_name = sorted(os.listdir(dir_path))
     for i in range(len(data_name)):
         print("Running: " + str(i+1) + "/" + str(len(data_name)))
-        inference(cf, os.path.join(dir_path, data_name[i]), USE_CUDA)
+        inference(cf, os.path.join(dir_path, data_name[i]), device)
     return 
 
 if __name__ == '__main__':

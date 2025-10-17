@@ -3,7 +3,6 @@ import sys
 import torch
 import torchvision
 import torch.nn as nn
-from torch.autograd import Variable
 
 import time
 import yaml
@@ -16,22 +15,24 @@ import datetime
 import copy
 from util import make_dir, get_optimizer, norm_flow
 from gyro import (
-    get_grid, 
-    get_rotations, 
+    get_grid,
+    get_rotations,
     visual_rotation,
     torch_QuaternionProduct,
     torch_norm_quat
     )
 from warp import warp_video
+from device import get_device
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-def run(model, loader, cf, USE_CUDA=True):
+def run(model, loader, cf, device):
     no_flo = False
     number_virtual, number_real = cf['data']["number_virtual"], cf['data']["number_real"]
     model.net.eval()
     model.unet.eval()
     activation = nn.Softshrink(0.0006) # 0.0036
+    run_loss = torch.zeros(7, device=device)
     for i, data in enumerate(loader, 0):
         # get the inputs; data is a list of [inputs, labels]
         real_inputs, times, flo, flo_back, real_projections, real_postion, ois, real_queue_idx = data
@@ -48,33 +49,29 @@ def run(model, loader, cf, USE_CUDA=True):
         real_queue_idx = real_queue_idx.numpy()
         virtual_queue = [None] * batch_size
 
-        run_loss = 0
-        model.net.init_hidden(batch_size)
+        model.net.init_hidden(batch_size, device=device)
+        run_loss = torch.zeros(7, device=device)
         count = 0
         for j in range(step):
             if (j+1) % 100 == 0:
                 print("Step: "+str(j+1)+"/"+str(step))
             virtual_inputs, vt_1 = loader.dataset.get_virtual_data(
-                virtual_queue, real_queue_idx, times[:, j], times[:, j+1], times[:, 0], batch_size, number_virtual, real_postion[:,j]) 
+                virtual_queue, real_queue_idx, times[:, j], times[:, j+1], times[:, 0], batch_size, number_virtual, real_postion[:,j])
             real_inputs_step = real_inputs[:,j,:]
-            inputs = torch.cat((real_inputs_step,virtual_inputs), dim = 1) 
-
-            # inputs = Variable(real_inputs_step)
-            if USE_CUDA:
-                real_inputs_step = real_inputs_step.cuda()
-                virtual_inputs = virtual_inputs.cuda()
-                inputs = inputs.cuda()
-                if no_flo is False:
-                    flo_step = flo[:,j].cuda()
-                    flo_back_step = flo_back[:,j].cuda()
-                else:
-                    flo_step = None
-                    flo_back_step = None
-                vt_1 = vt_1.cuda()
-                real_projections_t = real_projections[:,j+1].cuda()
-                real_projections_t_1 = real_projections[:,j].cuda()
-                real_postion_anchor = real_postion[:,j].cuda()
-                ois_step = ois[:,j].cuda()
+            real_inputs_step = real_inputs_step.to(device)
+            virtual_inputs = virtual_inputs.to(device)
+            inputs = torch.cat((real_inputs_step, virtual_inputs), dim=1)
+            if no_flo is False:
+                flo_step = flo[:, j].to(device)
+                flo_back_step = flo_back[:, j].to(device)
+            else:
+                flo_step = None
+                flo_back_step = None
+            vt_1 = vt_1.to(device)
+            real_projections_t = real_projections[:, j+1].to(device)
+            real_projections_t_1 = real_projections[:, j].to(device)
+            real_postion_anchor = real_postion[:, j].to(device)
+            ois_step = ois[:, j].to(device)
 
             if no_flo is False:
                 b, h, w, _ = flo_step.size()
@@ -102,22 +99,21 @@ def run(model, loader, cf, USE_CUDA=True):
             loss_step = model.loss(out, vt_1, virtual_inputs, real_inputs_step, \
                 flo_step, flo_back_step, real_projections_t, real_projections_t_1, real_postion_anchor, \
                 follow = True, optical = True, undefine = True)
-            run_loss += loss_step
+            run_loss = run_loss + loss_step
 
             out = torch_QuaternionProduct(out, pos)
 
-            if USE_CUDA:
-                out = out.cpu().detach().numpy() 
+            out = out.detach().cpu().numpy()
 
             virtual_queue = loader.dataset.update_virtual_queue(batch_size, virtual_queue, out, times[:,j+1])
-    
-    run_loss /= step
+
+    run_loss = run_loss / step
     print( "\nLoss: follow, angle, smooth, c2_smooth, undefine, optical")
-    print(run_loss.cpu().numpy()[:-1], "\n")
+    print(run_loss.detach().cpu().numpy()[:-1], "\n")
     return np.squeeze(virtual_queue, axis=0)
 
 
-def inference(cf, data_path, USE_CUDA):
+def inference(cf, data_path, device):
     checkpoints_dir = cf['data']['checkpoints_dir']
     checkpoints_dir = make_dir(checkpoints_dir, cf)
     files = os.listdir(data_path)
@@ -131,25 +127,23 @@ def inference(cf, data_path, USE_CUDA):
 
     print("------Load Pretrined Model--------")
     if load_model is not None:
-        checkpoint = torch.load(load_model)
+        checkpoint = torch.load(load_model, map_location=device)
         print(load_model)
     else:
         load_last = os.path.join(checkpoints_dir, cf['data']['exp']+'_last.checkpoint')
-        checkpoint = torch.load(load_last)
+        checkpoint = torch.load(load_last, map_location=device)
         print(load_last)
     model.net.load_state_dict(checkpoint['state_dict'])
     model.unet.load_state_dict(checkpoint['unet'])
-                
-    if USE_CUDA:
-        model.net.cuda()
-        model.unet.cuda()
+
+    model.to(device)
 
     print("-----------Load Dataset----------")
     test_loader = get_inference_data_loader(cf, data_path, no_flo = False)
     data = test_loader.dataset.data[0]
 
     start_time = time.time()
-    virtual_queue= run(model, test_loader, cf, USE_CUDA=USE_CUDA)
+    virtual_queue= run(model, test_loader, cf, device)
 
     virtual_data = np.zeros((1,5))
     virtual_data[:,1:] = virtual_queue[0, 1:]
@@ -191,6 +185,7 @@ def main(args = None):
         cf = yaml.safe_load(f)
 
     USE_CUDA = cf['data']["use_cuda"]
+    device = get_device(USE_CUDA)
 
     log_file = open(os.path.join(cf["data"]["log"], cf['data']['exp']+'_test.log'), 'w+')
     printer = Printer(sys.stdout, log_file).open()
@@ -201,7 +196,7 @@ def main(args = None):
         save_path = os.path.join("./test", cf['data']['exp'], data_name[i]+'_stab.mp4')
 
         data_path = os.path.join(dir_path, data_name[i])
-        data, virtual_queue, video_name, grid= inference(cf, data_path, USE_CUDA)
+        data, virtual_queue, video_name, grid= inference(cf, data_path, device)
 
         virtual_queue2 = None
         visual_result(cf, data, data_name[i], virtual_queue, virtual_queue2 = virtual_queue2, compare_exp = None)

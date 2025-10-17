@@ -1,6 +1,5 @@
 import torch
 import numpy as np
-from torch.autograd import Variable
 import operator
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
@@ -33,7 +32,7 @@ class C1_Smooth_loss(torch.nn.Module):
         self.MSE = torch.nn.MSELoss()
 
     def forward(self, v_r_axis, v_axis_t_1 = None, real_postion = None):
-        quat_zero = torch.zeros(v_r_axis.shape).cuda()
+        quat_zero = torch.zeros_like(v_r_axis)
         quat_zero[:,3] = 1
         return self.MSE(v_r_axis, quat_zero)
 
@@ -50,7 +49,7 @@ class Follow_loss(torch.nn.Module):
 class Stay_loss(torch.nn.Module):
     def __init__(self):
         super(Stay_loss, self).__init__()
-        self.zero = torch.tensor([0.0,0.0,0.0,1.0]).cuda()
+        self.register_buffer("zero", torch.tensor([0.0, 0.0, 0.0, 1.0]))
 
     def forward(self, virtual_quat):
         return torch.mean(torch.abs(virtual_quat - self.zero))
@@ -64,7 +63,7 @@ class Angle_loss(torch.nn.Module):
     def forward(self, Q1, Q2, threshold = 0.5236, logistic_beta1 = 100):
         batch_size = Q1.shape[0]
         Q3 = torch_norm_quat(torch_QuaternionProduct(Q2, torch_QuaternionReciprocal(Q1)))
-        theta = torch.zeros(batch_size).cuda()
+        theta = torch.zeros(batch_size, device=Q1.device)
         index = (Q3[:,3] < 1).nonzero()
         theta[index] = torch.acos(Q3[index,3]) * 2
         loss = torch.mean(theta * (1 / (1 + torch.exp(-logistic_beta1 * (theta - threshold)))))
@@ -74,7 +73,7 @@ class Optical_loss(torch.nn.Module):
     def __init__(self):
         super(Optical_loss, self).__init__()
         self.static_options = get_static()
-        self.mesh = get_mesh()
+        self.register_buffer("mesh", get_mesh())
 
     def forward(self, Vt, Vt_1, flo, flo_back, real_projection_t, real_projection_t_1):
         virtual_projection_t = torch_GetVirtualProjection(self.static_options, Vt) 
@@ -89,16 +88,16 @@ class Optical_loss(torch.nn.Module):
         grid_t_1 = torch.nn.functional.upsample_bilinear(grid_t_1, size = (h, w)) # [B,C(xy),H,W]
         
         mesh = self.mesh.repeat(b, 1, 1, 1)
-        flo = flo + mesh 
+        flo = flo + mesh
         flo_back = flo_back + mesh # [B,H,W,C]
 
         valid = (flo[:,:,:,0] > 0) * (flo[:,:,:,1] > 0) * (flo[:,:,:,0] < 1) * (flo[:,:,:,1] < 1)
-        valid_f = torch.unsqueeze(valid, dim = 3).type(torch.cuda.FloatTensor)
-        valid = torch.unsqueeze(valid, dim = 1).type(torch.cuda.FloatTensor)
+        valid_f = torch.unsqueeze(valid, dim = 3).float()
+        valid = torch.unsqueeze(valid, dim = 1).float()
 
         valid_back = (flo_back[:,:,:,0] > 0) * (flo_back[:,:,:,1] > 0) * (flo_back[:,:,:,0] < 1) * (flo_back[:,:,:,1] < 1)
-        valid_back_f = torch.unsqueeze(valid_back, dim = 3).type(torch.cuda.FloatTensor) 
-        valid_back = torch.unsqueeze(valid_back, dim = 1).type(torch.cuda.FloatTensor) # [B,C,H,W]
+        valid_back_f = torch.unsqueeze(valid_back, dim = 3).float()
+        valid_back = torch.unsqueeze(valid_back, dim = 1).float() # [B,C,H,W]
 
         flo = (flo * 2 - 1) * valid_f
         flo_back = (flo_back * 2 - 1) * valid_back_f
@@ -119,14 +118,12 @@ class Optical_loss(torch.nn.Module):
         return loss 
 
 
-def get_mesh(height = 270, width = 480, USE_CUDA = True):
+def get_mesh(height = 270, width = 480, device=None):
     xs = np.linspace(0, 1, width, endpoint = False) + 0.5 / height
     ys = np.linspace(0, 1, height, endpoint = False) + 0.5 / width
     xmesh, ymesh = np.meshgrid(xs, ys)
     # Reshape the sampling positions to a H x W x 2 tensor
-    mesh = torch.Tensor(np.expand_dims(np.moveaxis(np.array(list(zip(xmesh, ymesh))), 1, 2),axis=0))
-    if USE_CUDA:
-        mesh = mesh.cuda()
+    mesh = torch.tensor(np.expand_dims(np.moveaxis(np.array(list(zip(xmesh, ymesh))), 1, 2), axis=0), dtype=torch.float32, device=device)
     return mesh
 
 class Undefine_loss(torch.nn.Module):
@@ -138,17 +135,12 @@ class Undefine_loss(torch.nn.Module):
         height = self.static_options["height"]
         x0, x1, y0, y1 = \
             int(width*ratio), int(width*(1-ratio)), int(height*ratio), int(height*(1-ratio))
-        self.norm = torch.Tensor([width, height, 1])
-        self.p00 = torch.Tensor([x0, y0, 1])
-        self.p01 = torch.Tensor([x0, y1, 1])
-        self.p10 = torch.Tensor([x1, y0, 1])
-        self.p11 = torch.Tensor([x1, y1, 1])
-        if USE_CUDA == True:
-            self.p00 = self.p00.cuda()
-            self.p01 = self.p01.cuda()
-            self.p10 = self.p10.cuda()
-            self.p11 = self.p11.cuda()
-            self.norm = self.norm.cuda()
+        dtype = torch.float32
+        self.register_buffer("norm", torch.tensor([width, height, 1], dtype=dtype))
+        self.register_buffer("p00", torch.tensor([x0, y0, 1], dtype=dtype))
+        self.register_buffer("p01", torch.tensor([x0, y1, 1], dtype=dtype))
+        self.register_buffer("p10", torch.tensor([x1, y0, 1], dtype=dtype))
+        self.register_buffer("p11", torch.tensor([x1, y1, 1], dtype=dtype))
 
     def forward(self, Vt, Rt, ratio = 0.04):
         batch_size = Vt.size()[0]
@@ -175,6 +167,6 @@ class Undefine_loss(torch.nn.Module):
         return loss
     
     def get_loss(self, p):
-        d =  (p - self.inner_ratio) * (p < self.inner_ratio).type(torch.cuda.FloatTensor) + \
-            (1 - self.inner_ratio - p) * (p > (1 - self.inner_ratio)).type(torch.cuda.FloatTensor)
-        return torch.sum(d**2, dim = 1) 
+        d =  (p - self.inner_ratio) * (p < self.inner_ratio).float() + \
+            (1 - self.inner_ratio - p) * (p > (1 - self.inner_ratio)).float()
+        return torch.sum(d**2, dim = 1)
