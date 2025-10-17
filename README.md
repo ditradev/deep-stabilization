@@ -5,12 +5,12 @@
 This repository contains the Pytorch implementation of our method in the paper "Deep Online Fused Video Stabilization".
 
 ## Environment Setting
-Python version >= 3.6
-Pytorch with CUDA >= 1.0.0 (guide is [here](https://pytorch.org/get-started/locally/))
-Install other used packages:
+- Python version >= 3.10
+- PyTorch with CUDA >= 2.2 (guide is [here](https://pytorch.org/get-started/locally/))
+
+Install the remaining Python dependencies with the consolidated requirements file:
 ```
-cd dvs
-pip install -r requirements.txt --ignore-installed
+pip install -r requirements.txt
 ```
 
 ## Data Preparation
@@ -26,9 +26,22 @@ The **gyro/OIS curve visualization** can be found at *dvs/video/s_114_outdoor_ru
 ## FlowNet2 Preparation
 Note, we provide optical flow result of one test video in our Data Preparation. If you would like to generate them for all test videos, please follow [FlowNet2 official website](https://github.com/NVIDIA/flownet2-pytorch) and guide below. Otherwise, you can skip this section. 
 
-Note, FlowNet2 installation is tricky. Please use Python=3.6 and Pytorch=1.0.0. More details are [here](https://github.com/NVIDIA/flownet2-pytorch/issues/156) or contact us for any questions.
+Note, FlowNet2 installation is tricky. Ensure your CUDA toolkit matches the PyTorch wheels installed above (we target Python 3.10+ and PyTorch 2.2+). More details are [here](https://github.com/NVIDIA/flownet2-pytorch/issues/156) or contact us for any questions.
 
-Download FlowNet2 model *FlowNet2_checkpoint.pth.tar* [here](https://drive.google.com/file/d/1hF8vS6YeHkx3j2pfCeQqqZGwA_PJq_Da/view).  Move it under folder *dvs/flownet2*.
+Download the FlowNet2 checkpoint into *dvs/flownet2* (the snippet below uses `torch.hub.download_url_to_file`, but any equivalent download method works):
+```
+python - <<'PY'
+from pathlib import Path
+from torch.hub import download_url_to_file
+
+checkpoint_dir = Path("dvs/flownet2")
+checkpoint_dir.mkdir(parents=True, exist_ok=True)
+download_url_to_file(
+    "https://github.com/NVIDIA/flownet2-pytorch/releases/download/v1.0/FlowNet2_checkpoint.pth.tar",
+    checkpoint_dir / "FlowNet2_checkpoint.pth.tar",
+)
+PY
+```
 ```
 python warp/read_write.py # video2frames
 cd flownet2
