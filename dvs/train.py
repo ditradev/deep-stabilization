@@ -3,7 +3,6 @@ import sys
 import torch
 import torchvision
 import torch.nn as nn
-from torch.autograd import Variable
 
 import time
 import yaml
@@ -16,10 +15,11 @@ import datetime
 import copy
 from util import make_dir, get_optimizer, AverageMeter, save_train_info, norm_flow
 from gyro import torch_QuaternionProduct, torch_QuaternionReciprocal, torch_norm_quat
+from device import get_device
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-def run_epoch(model, loader, cf, epoch, lr, optimizer=None, is_training=True, USE_CUDA=True, clip_norm=0):
+def run_epoch(model, loader, cf, epoch, lr, device, optimizer=None, is_training=True, clip_norm=0):
     no_flo = False
     number_virtual, number_real = cf['data']["number_virtual"], cf['data']["number_real"]
     avg_loss = AverageMeter()
@@ -46,30 +46,26 @@ def run_epoch(model, loader, cf, epoch, lr, optimizer=None, is_training=True, US
         virtual_queue = loader.dataset.random_init_virtual_queue(batch_size, real_postion[:,0,:].numpy(), times[:,1]) # TODO
         # virtual_queue = [None] * batch_size
         loss = 0
-        model.net.init_hidden(batch_size)
+        model.net.init_hidden(batch_size, device=device)
         for j in range(step):
             virtual_inputs, vt_1 = loader.dataset.get_virtual_data(
-                virtual_queue, real_queue_idx, times[:, j], times[:, j+1], times[:, 0], batch_size, number_virtual, real_postion[:,j]) 
-            
-            real_inputs_step = real_inputs[:,j,:]
-            inputs = torch.cat((real_inputs_step,virtual_inputs), dim = 1) 
+                virtual_queue, real_queue_idx, times[:, j], times[:, j+1], times[:, 0], batch_size, number_virtual, real_postion[:,j])
 
-            # inputs = Variable(real_inputs_step)
-            if USE_CUDA:
-                real_inputs_step = real_inputs_step.cuda()
-                virtual_inputs = virtual_inputs.cuda()
-                inputs = inputs.cuda()
-                if no_flo is False:
-                    flo_step = flo[:,j].cuda()
-                    flo_back_step = flo_back[:,j].cuda()
-                else:
-                    flo_step = None
-                    flo_back_step = None
-                vt_1 = vt_1.cuda()
-                real_projections_t = real_projections[:,j+1].cuda()
-                real_projections_t_1 = real_projections[:,j].cuda()
-                real_postion_anchor = real_postion[:,j].cuda()
-                ois_step = ois[:,j].cuda()
+            real_inputs_step = real_inputs[:,j,:]
+            real_inputs_step = real_inputs_step.to(device)
+            virtual_inputs = virtual_inputs.to(device)
+            inputs = torch.cat((real_inputs_step, virtual_inputs), dim=1)
+            if no_flo is False:
+                flo_step = flo[:, j].to(device)
+                flo_back_step = flo_back[:, j].to(device)
+            else:
+                flo_step = None
+                flo_back_step = None
+            vt_1 = vt_1.to(device)
+            real_projections_t = real_projections[:, j+1].to(device)
+            real_projections_t_1 = real_projections[:, j].to(device)
+            real_postion_anchor = real_postion[:, j].to(device)
+            ois_step = ois[:, j].to(device)
 
             if no_flo is False:
                 b, h, w, _ = flo_step.size()
@@ -125,8 +121,7 @@ def run_epoch(model, loader, cf, epoch, lr, optimizer=None, is_training=True, US
             pos = torch_QuaternionProduct(virtual_position, real_postion_anchor)
             out = torch_QuaternionProduct(out, pos)
 
-            if USE_CUDA:
-                out = out.cpu().detach().numpy() 
+            out = out.detach().cpu().numpy()
 
             virtual_queue = loader.dataset.update_virtual_queue(batch_size, virtual_queue, out, times[:,j+1])
 
@@ -150,13 +145,15 @@ def run_epoch(model, loader, cf, epoch, lr, optimizer=None, is_training=True, US
 def train(args = None):
     torch.autograd.set_detect_anomaly(True)
     config_file = args.config
-    cf = yaml.load(open(config_file, 'r'))
+    with open(config_file, 'r') as f:
+        cf = yaml.safe_load(f)
     
     USE_CUDA = cf['data']["use_cuda"]
+    device = get_device(USE_CUDA)
     seed = cf['train']["seed"]
     
     torch.manual_seed(seed)
-    if USE_CUDA:
+    if device.type == "cuda":
         torch.cuda.manual_seed(seed)
 
     checkpoints_dir = cf['data']['checkpoints_dir']
@@ -195,7 +192,7 @@ def train(args = None):
 
     if load_model is not None:
         print("------Load Pretrined Model--------")
-        checkpoint = torch.load(load_model)
+        checkpoint = torch.load(load_model, map_location=device)
         model.net.load_state_dict(checkpoint['state_dict'])
         model.unet.load_state_dict(checkpoint['unet'])
         print("------Resume Training Process-----")
@@ -205,16 +202,14 @@ def train(args = None):
     else:
         epoch_load = 0
                 
-    if USE_CUDA:
-        model.net.cuda()
-        model.unet.cuda()
-        if load_model is not None:
-            for state in optimizer.state.values():
-                for k, v in state.items():
-                    if isinstance(v, torch.Tensor):
-                        state[k] = v.cuda()
-            for param in optimizer.param_groups:
-                init_lr = param['lr']
+    model.to(device)
+    if load_model is not None:
+        for state in optimizer.state.values():
+            for k, v in state.items():
+                if isinstance(v, torch.Tensor):
+                    state[k] = v.to(device)
+        for param in optimizer.param_groups:
+            init_lr = param['lr']
 
     print("-----------Load Dataset----------")
     train_loader, test_loader = get_data_loader(cf, no_flo = False)
@@ -238,9 +233,9 @@ def train(args = None):
         
         print("Epoch: %d, learning_rate: %.5f" % (count, lr))
 
-        train_loss = run_epoch(model, train_loader, cf, count, lr, optimizer=optimizer, clip_norm=clip_norm, is_training=True, USE_CUDA=USE_CUDA)
+        train_loss = run_epoch(model, train_loader, cf, count, lr, device, optimizer=optimizer, clip_norm=clip_norm, is_training=True)
 
-        test_loss = run_epoch(model, test_loader, cf, count, lr, is_training=False, USE_CUDA=USE_CUDA)
+        test_loss = run_epoch(model, test_loader, cf, count, lr, device, is_training=False)
 
         time_used = (time.time() - start_time) / 60
         print("Epoch %d done | TrLoss: %.4f | TestLoss: %.4f | Time_used: %.4f minutes" % (

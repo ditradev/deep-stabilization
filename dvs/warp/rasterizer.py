@@ -5,7 +5,7 @@ import torch
 import cv2
 import time
 
-device = torch.device("cuda")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def Rasterization(image, grid, get_mesh_only = False):
     # grid xy WH
@@ -134,7 +134,7 @@ def triangle2mask(d, height, width): # d: [N x T x 3 x 2]
     # [N x P]
 
     mask = (w0 > 0) & (w1 > 0) & (w2 > 0)
-    mask = torch.unsqueeze(mask, 3).type(torch.cuda.FloatTensor)
+    mask = torch.unsqueeze(mask, 3).float().to(device)
 
     w = torch.stack((w0,w1,w2),dim = 3) * mask
 

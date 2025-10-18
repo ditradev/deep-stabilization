@@ -4,13 +4,15 @@
 
 This repository contains the Pytorch implementation of our method in the paper "Deep Online Fused Video Stabilization".
 
-## Environment
-
-* Python 3.10 or newer
-* [PyTorch 2.2+](https://pytorch.org/get-started/locally/) with a CUDA build that matches your driver
-* Project dependencies from the repository root:
 
 ```bash
+
+## Environment Setting
+- Python version >= 3.10
+- PyTorch with CUDA >= 2.2 (guide is [here](https://pytorch.org/get-started/locally/))
+
+Install the remaining Python dependencies with the consolidated requirements file:
+```
 pip install -r requirements.txt
 ```
 
@@ -29,13 +31,7 @@ The **gyro/OIS curve visualization** can be found at *dvs/video/s_114_outdoor_ru
 ## FlowNet2 Preparation
 Note, we provide optical flow result of one test video in our Data Preparation. If you would like to generate them for all test videos, please follow [FlowNet2 official website](https://github.com/NVIDIA/flownet2-pytorch) and guide below. Otherwise, you can skip this section. 
 
-FlowNet2 still builds custom CUDA extensions.  The upstream project documents additional troubleshooting tips [here](https://github.com/NVIDIA/flownet2-pytorch/issues/156); follow them if you run into compiler or driver errors.
 
-Download FlowNet2 model *FlowNet2_checkpoint.pth.tar* [here](https://drive.google.com/file/d/1hF8vS6YeHkx3j2pfCeQqqZGwA_PJq_Da/view).  Move it under folder *dvs/flownet2*.  You can automate this step with [gdown](https://github.com/wkentaro/gdown):
-
-```bash
-pip install --upgrade gdown  # optional helper
-gdown 1hF8vS6YeHkx3j2pfCeQqqZGwA_PJq_Da -O dvs/flownet2/FlowNet2_checkpoint.pth.tar
 ```
 ```
 python warp/read_write.py # video2frames

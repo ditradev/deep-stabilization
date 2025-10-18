@@ -19,9 +19,11 @@ class LayerLSTM(nn.Module):
         self.LSTM = nn.LSTMCell(input_size, hidden_size, bias)
         self.hidden_size = hidden_size
     
-    def init_hidden(self, batch_size):
-        self.hx = torch.zeros((batch_size, self.hidden_size)).cuda()
-        self.cx = torch.zeros((batch_size, self.hidden_size)).cuda()
+    def init_hidden(self, batch_size, device=None):
+        if device is None:
+            device = self.hx.device if hasattr(self, "hx") else next(self.parameters()).device
+        self.hx = torch.zeros((batch_size, self.hidden_size), device=device)
+        self.cx = torch.zeros((batch_size, self.hidden_size), device=device)
 
     def forward(self, x):
         self.hx, self.cx = self.LSTM(x, (self.hx, self.cx))
@@ -157,9 +159,9 @@ class Net(nn.Module):
         self.class_num = fc_layer_param[fc_layers-1][0]
         self.fcs = nn.Sequential(OrderedDict(fcs))
 
-    def init_hidden(self, batch_size):
+    def init_hidden(self, batch_size, device=None):
         for i in range(len(self.rnns)):
-            self.rnns[i].init_hidden(batch_size)
+            self.rnns[i].init_hidden(batch_size, device=device)
 
     def forward(self, x, flo, ois):
         b,c = x.size()   #x->[batch,channel,height,width]
@@ -212,7 +214,7 @@ class Model():
         v_pos = torch_QuaternionProduct(out, virtual_inputs[:, -4:])
         r_pos = torch_QuaternionProduct(v_pos, real_postion_anchor)
 
-        loss = torch.zeros(7).cuda()
+        loss = torch.zeros(7, device=out.device)
         if self.loss_follow_w > 0 and follow:
             for i in range(-2,3):
                 loss[0] += self.loss_follow_w * self.loss_follow(v_pos, real_inputs[:,unit_size*(i+mid):unit_size*(i+mid)+4], None)
@@ -238,6 +240,18 @@ class Model():
         if self.loss_stay_w > 0 and stay:
             loss[6] = self.loss_stay_w * self.loss_stay(out) 
         return loss
+
+    def to(self, device):
+        self.net.to(device)
+        self.unet.to(device)
+        self.loss_smooth.to(device)
+        self.loss_follow.to(device)
+        self.loss_c2_smooth.to(device)
+        self.loss_optical.to(device)
+        self.loss_undefine.to(device)
+        self.loss_angle.to(device)
+        self.loss_stay.to(device)
+        return self
 
 
     def init_weights(self, cf):

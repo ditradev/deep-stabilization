@@ -2,7 +2,6 @@ import numpy as np
 from numpy import linalg as LA
 import matplotlib.pyplot as plt
 import torch
-from torch.autograd import Variable
 
 def get_static(height = 1080, width = 1920, ratio = 0.1):
     static_options = {}
@@ -34,13 +33,12 @@ def norm_quat(quat):
 def torch_norm_quat(quat, USE_CUDA = True):
     # Method 1:
     batch_size = quat.size()[0]
-    quat_out = Variable(torch.zeros((batch_size, 4), requires_grad=True))
-    if USE_CUDA == True:
-        quat_out = quat_out.cuda()
+    device = quat.device
+    quat_out = torch.zeros((batch_size, 4), device=device, requires_grad=True)
     for i in range(batch_size):
-        norm_quat = torch.norm(quat[i])   
-        if norm_quat > 1e-6:        
-            quat_out[i] = quat[i] / norm_quat  
+        norm_quat = torch.norm(quat[i])
+        if norm_quat > 1e-6:
+            quat_out[i] = quat[i] / norm_quat
             #     [0 norm_quat norm_quat - 1e-6]
         else:
             quat_out[i,:3] = quat[i,:3] * 0
@@ -74,12 +72,11 @@ def torch_ConvertAxisAngleToQuaternion(axis, USE_CUDA = True):
 
     angle = torch.norm(axis[:,:3], dim = 1)
 
-    half_angle = angle * 0.5 
+    half_angle = angle * 0.5
     sin_half_angle = torch.sin(half_angle)
-    quats = Variable(torch.zeros((batch_size, 4), requires_grad=True))
-    norm_axis = axis[:,:3] * 1
-    if USE_CUDA:
-        quats = quats.cuda()
+    device = axis.device
+    quats = torch.zeros((batch_size, 4), device=device, requires_grad=True)
+    norm_axis = axis[:, :3].clone()
     for i in range(batch_size):
         if angle[i] > 1e-6:
             norm_axis[i] = axis[i,:3]/angle[i]
@@ -114,14 +111,13 @@ def ConvertQuaternionToAxisAngle_no_angle(quat):
 
 def torch_ConvertQuaternionToAxisAngle(quat, USE_CUDA = True):
     batch_size = quat.size()[0]
-    axis_angle = Variable(torch.zeros((batch_size, 4), requires_grad=True))
-    if USE_CUDA:
-        axis_angle = axis_angle.cuda()
-    for i in range(batch_size): 
+    device = quat.device
+    axis_angle = torch.zeros((batch_size, 4), device=device, requires_grad=True)
+    for i in range(batch_size):
         axis_norm = torch.norm(quat[i, 0:3])
         if axis_norm > 1e-6:
             axis_norm_reciprocal = 1/axis_norm  * 2 * torch.acos(quat[i,3])
-            axis_angle[i,0] = quat[i,0] * axis_norm_reciprocal   
+            axis_angle[i,0] = quat[i,0] * axis_norm_reciprocal
             axis_angle[i,1] = quat[i,1] * axis_norm_reciprocal   
             axis_angle[i,2] = quat[i,2] * axis_norm_reciprocal   
     return axis_angle
@@ -161,10 +157,10 @@ def QuaternionProduct(q1, q2):
     return norm_quat(quat)
 
 def torch_QuaternionProduct(q1, q2, USE_CUDA = True):
-    x1 = q1[:,0]  
-    y1 = q1[:,1]   
-    z1 = q1[:,2]   
-    w1 = q1[:,3]   
+    x1 = q1[:,0]
+    y1 = q1[:,1]
+    z1 = q1[:,2]
+    w1 = q1[:,3]
 
     x2 = q2[:,0]  
     y2 = q2[:,1]  
@@ -172,14 +168,13 @@ def torch_QuaternionProduct(q1, q2, USE_CUDA = True):
     w2 = q2[:,3]  
 
     batch_size = q1.size()[0]
-    quat = Variable(torch.zeros((batch_size, 4), requires_grad=True))
-    if USE_CUDA == True:
-        quat = quat.cuda()
-    
-    quat[:,3] =  w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2  
-    quat[:,0] =  w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2  
-    quat[:,1] = w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2  
-    quat[:,2] = w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2  
+    device = q1.device
+    quat = torch.zeros((batch_size, 4), device=device, requires_grad=True)
+
+    quat[:,3] =  w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2
+    quat[:,0] =  w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2
+    quat[:,1] = w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2
+    quat[:,2] = w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2
 
     quat = torch_norm_quat(quat)
 
@@ -372,9 +367,11 @@ def torch_GetProjectionHomography(rot, fov, width, height, USE_CUDA = True):
     batch_size = rotation.size()[0]
     offset = np.array([0,0])
     intrinsics = GetIntrinsics(focal_length, offset, width, height)
-    intrinsics = torch.Tensor(np.repeat(np.expand_dims(intrinsics, axis = 0), batch_size, axis = 0))
-    if USE_CUDA == True:
-        intrinsics = intrinsics.cuda()
+    intrinsics = torch.tensor(
+        np.repeat(np.expand_dims(intrinsics, axis=0), batch_size, axis=0),
+        dtype=torch.float32,
+        device=rotation.device,
+    )
     projection_homography = torch.matmul(intrinsics, rotation)
     return projection_homography
 
@@ -403,9 +400,8 @@ def torch_ConvertQuaternionToRotationMatrix(quat, USE_CUDA = True):
     w = quat[:,3]
 
     batch_size = quat.size()[0]
-    rotation = Variable(torch.zeros((batch_size, 9), requires_grad=True))
-    if USE_CUDA == True:
-        rotation = rotation.cuda()
+    device = quat.device
+    rotation = torch.zeros((batch_size, 9), device=device, requires_grad=True)
 
     rotation[:,0] = 1 - 2 * y * y - 2 * z * z
     rotation[:,1] = 2 * x * y - 2 * z * w
@@ -500,9 +496,8 @@ def torch_GetForwardGrid(static_options, real_projections, virtual_projection, U
     # virtual_projection: a single 3x3 projection.
     batch_size = real_projections.size()[0]
 
-    grid = torch.zeros((batch_size, 4, static_options["num_grid_cols"], static_options["num_grid_rows"]))
-    if USE_CUDA:
-        grid = grid.cuda()
+    device = real_projections.device
+    grid = torch.zeros((batch_size, 4, static_options["num_grid_cols"], static_options["num_grid_rows"]), device=device)
     width = static_options["width"]
     height = static_options["height"]
 
@@ -514,11 +509,8 @@ def torch_GetForwardGrid(static_options, real_projections, virtual_projection, U
         v = i * row_step
         for j in range(static_options["num_grid_cols"]):
             u = j * col_step
-            point = torch.Tensor([u * width, v * height, 1])
-            norm = torch.Tensor([width, height, 1])
-            if USE_CUDA == True:
-                point = point.cuda()
-                norm = norm.cuda()
+            point = torch.tensor([u * width, v * height, 1], dtype=torch.float32, device=device)
+            norm = torch.tensor([width, height, 1], dtype=torch.float32, device=device)
             warped_point = torch_ApplyTransform(transform, point)
             warped_point = warped_point / norm # normalize
             grid[:, 0, j, i] = warped_point[:,0]
@@ -551,9 +543,8 @@ def torch_GetWarpingFlow(static_options, real_projections_src, real_projections_
     # virtual_projection: a single 3x3 projection.
     batch_size = real_projections_src.size()[0]
 
-    grid = torch.zeros((batch_size, 4, static_options["num_grid_cols"], static_options["num_grid_rows"]))
-    if USE_CUDA:
-        grid = grid.cuda()
+    device = real_projections_src.device
+    grid = torch.zeros((batch_size, 4, static_options["num_grid_cols"], static_options["num_grid_rows"]), device=device)
     width = static_options["width"]
     height = static_options["height"]
 
@@ -565,11 +556,8 @@ def torch_GetWarpingFlow(static_options, real_projections_src, real_projections_
         v = i * row_step
         for j in range(static_options["num_grid_cols"]):
             u = j * col_step
-            point = torch.Tensor([u * width, v * height, 1])
-            norm = torch.Tensor([width, height, 1])
-            if USE_CUDA == True:
-                point = point.cuda()
-                norm = norm.cuda()
+            point = torch.tensor([u * width, v * height, 1], dtype=torch.float32, device=device)
+            norm = torch.tensor([width, height, 1], dtype=torch.float32, device=device)
             warped_point = torch_ApplyTransform(transform, point)
             warped_point = warped_point / norm # normalize
             grid[:, 0, j, i] = warped_point[:,0]
