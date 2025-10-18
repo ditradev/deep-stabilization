@@ -9,3 +9,4 @@ PyYAML==5.4.1
 scipy==1.5.4
 tensorboardX==2.1
 tqdm==4.59.0
+torchvision>=0.13

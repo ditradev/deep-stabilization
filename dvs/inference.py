@@ -15,6 +15,7 @@ from model import Model
 import datetime
 import copy
 from util import make_dir, get_optimizer, norm_flow
+from flow import RAFTFlowEstimator
 from gyro import (
     get_grid, 
     get_rotations, 
@@ -146,6 +147,9 @@ def inference(cf, data_path, USE_CUDA):
 
     print("-----------Load Dataset----------")
     test_loader = get_inference_data_loader(cf, data_path, no_flo = False)
+    flow_device = "cuda" if USE_CUDA and torch.cuda.is_available() else "cpu"
+    flow_model = RAFTFlowEstimator(device=flow_device)
+    test_loader.dataset.set_flow_wrapper(flow_model)
     data = test_loader.dataset.data[0]
 
     start_time = time.time()

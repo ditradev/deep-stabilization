@@ -2,13 +2,13 @@ from torch.utils.data import Dataset
 import os
 import collections
 from gyro import (
-    LoadGyroData, 
-    LoadOISData, 
-    LoadFrameData, 
-    GetGyroAtTimeStamp, 
-    get_static, 
-    GetMetadata, 
-    GetProjections, 
+    LoadGyroData,
+    LoadOISData,
+    LoadFrameData,
+    GetGyroAtTimeStamp,
+    get_static,
+    GetMetadata,
+    GetProjections,
     train_GetGyroAtTimeStamp,
     QuaternionProduct,
     QuaternionReciprocal,
@@ -19,9 +19,10 @@ import random
 import numpy as np
 import torchvision.transforms as transforms
 import torch
-from flownet2 import flow_utils
+import cv2
 from scipy import ndimage, misc
 from numpy import linalg as LA
+from flow.raft_wrapper import RAFTFlowEstimator
 
 def get_data_loader(cf, no_flo = False):
     size = cf["data"]["batch_size"]
@@ -80,13 +81,14 @@ class DVS_data():
         self.ois = None
         self.frame = None
         self.length = 0
-        self.flo_path = None
         self.flo_shape = None
-        self.flo_back_path = None
+        self.frame_paths = None
+        self.video_path = None
+        self._frame_cache = None
 
 class Dataset_Gyro(Dataset):
     def __init__(self, path, sample_freq = 33*1000000, number_real = 10, time_train = 2000*1000000, \
-        transform = None, inference_only = False, no_flo = False, resize_ratio = 1): 
+        transform = None, inference_only = False, no_flo = False, resize_ratio = 1):
         r"""
         Arguments:
             sample_freq: real quaternions [t-sample_freq*number_real, t+sample_freq*number_real] ns
@@ -99,6 +101,7 @@ class Dataset_Gyro(Dataset):
         self.resize_ratio = resize_ratio
         self.static_options = get_static()
         self.inference_only = inference_only
+        self.flow_wrapper = None
 
         self.ois_ratio = np.array([self.static_options["crop_window_width"] / self.static_options["width"], \
             self.static_options["crop_window_height"] / self.static_options["height"]]) * 0.01
@@ -118,7 +121,7 @@ class Dataset_Gyro(Dataset):
         self.data = []
         for i in range(self.length):
             self.data.append(self.process_one_video(os.path.join(path,self.data_name[i])))
-    
+
     def process_one_video(self, path):
         dvs_data = DVS_data()
         files = sorted(os.listdir(path))
@@ -137,19 +140,62 @@ class Dataset_Gyro(Dataset):
             elif "ois" in f and "txt" in f:
                 dvs_data.ois = LoadOISData(file_path)
                 print("ois:", dvs_data.ois.shape, end="    ")
-            elif f == "flo":
-                dvs_data.flo_path, dvs_data.flo_shape = LoadFlow(file_path)
-                print("flo_path:", len(dvs_data.flo_path), end="    ")
-                print("flo_shape:", dvs_data.flo_shape, end="    ")
-            elif f == "flo_back":
-                dvs_data.flo_back_path, _ = LoadFlow(file_path)
-            
+            elif f.lower() == "frames":
+                dvs_data.frame_paths = self._load_frame_paths(file_path)
+                print("frames:", len(dvs_data.frame_paths), end="    ")
+            elif f.lower().endswith(".mp4") or f.lower().endswith(".avi"):
+                dvs_data.video_path = file_path
+                print("video:", os.path.basename(dvs_data.video_path), end="    ")
+
         print()
-        if dvs_data.flo_path is not None:
-            dvs_data.length = min(dvs_data.frame.shape[0] - 1, len(dvs_data.flo_path))
-        else:
-            dvs_data.length = dvs_data.frame.shape[0] - 1 
+        dvs_data.length = dvs_data.frame.shape[0] - 1
         return dvs_data
+
+    def _load_frame_paths(self, folder):
+        frame_files = [f for f in sorted(os.listdir(folder)) if self._is_image_file(f)]
+        return [os.path.join(folder, f) for f in frame_files]
+
+    @staticmethod
+    def _is_image_file(filename):
+        valid_ext = {".png", ".jpg", ".jpeg", ".bmp"}
+        return os.path.splitext(filename.lower())[1] in valid_ext
+
+    def _ensure_video_cache(self, dvs_data: DVS_data):
+        if dvs_data._frame_cache is not None:
+            return
+        if dvs_data.video_path is None:
+            raise RuntimeError("No frame directory or video file found for optical flow estimation.")
+        dvs_data._frame_cache = self._load_video_frames(dvs_data.video_path)
+
+    def _load_video_frames(self, video_path):
+        capture = cv2.VideoCapture(video_path)
+        if not capture.isOpened():
+            raise IOError(f"Unable to open video file {video_path} for optical flow estimation")
+        frames = []
+        success, frame = capture.read()
+        while success:
+            frames.append(frame)
+            success, frame = capture.read()
+        capture.release()
+        return frames
+
+    def _load_frame_sequence(self, dvs_data: DVS_data, start_idx: int, end_idx: int):
+        frames = []
+        if dvs_data.frame_paths is not None:
+            for frame_idx in range(start_idx, end_idx + 1):
+                frame_path = dvs_data.frame_paths[frame_idx]
+                frame = cv2.imread(frame_path, cv2.IMREAD_COLOR)
+                if frame is None:
+                    raise IOError(f"Failed to read frame {frame_path} for optical flow estimation")
+                frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        else:
+            self._ensure_video_cache(dvs_data)
+            for frame_idx in range(start_idx, end_idx + 1):
+                if frame_idx >= len(dvs_data._frame_cache):
+                    raise IndexError("Frame index out of range while loading video frames")
+                frame = dvs_data._frame_cache[frame_idx]
+                frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        return frames
 
     def generate_quaternions(self, dvs_data):
         first_id = random.randint(0, dvs_data.length - self.number_train) + 1 # skip the first frame
@@ -177,20 +223,16 @@ class Dataset_Gyro(Dataset):
         return sample_data, sample_time, first_id, real_postion, sample_ois
 
     def load_flo(self, idx, first_id):
-        shape = self.data[idx].flo_shape
-        h, w = shape[0], shape[1]
-        flo = np.zeros((self.number_train, h, w, 2))
-        flo_back = np.zeros((self.number_train, h, w, 2))
+        if self.flow_wrapper is None:
+            raise RuntimeError("Flow wrapper has not been initialized. Call set_flow_wrapper before accessing optical flow.")
 
-        for i in range(self.number_train):
-            frame_id = i + first_id
-            f = flow_utils.readFlow(self.data[idx].flo_path[frame_id-1]).astype(np.float32) 
-            flo[i] = f
+        frames = self._load_frame_sequence(self.data[idx], first_id - 1, first_id + self.number_train - 1)
+        flo, flo_back = self.flow_wrapper.compute_sequence(frames)
 
-            f_b = flow_utils.readFlow(self.data[idx].flo_back_path[frame_id-1]).astype(np.float32) 
-            flo_back[i] = f_b
+        if self.data[idx].flo_shape is None and flo.shape[0] > 0:
+            self.data[idx].flo_shape = flo[0].shape
 
-        return flo, flo_back
+        return flo.astype(np.float32), flo_back.astype(np.float32)
 
     def load_real_projections(self, idx, first_id):
         real_projections = np.zeros((self.number_train + 1, self.static_options["num_grid_rows"], 3, 3))
@@ -211,6 +253,10 @@ class Dataset_Gyro(Dataset):
 
     def __len__(self):
         return self.length
+
+    def set_flow_wrapper(self, flow_wrapper: RAFTFlowEstimator):
+        self.flow_wrapper = flow_wrapper
+        return self
 
     def get_virtual_data(self, virtual_queue, real_queue_idx, pre_times, cur_times, time_start, batch_size, number_virtual, quat_t_1):
         # virtual_queue: [batch_size, num, 5 (timestamp, quats)]
@@ -283,12 +329,7 @@ def preprocess_gyro(gyro, extend = 200):
     new_gyro = np.concatenate((fake_gyro, gyro), axis = 0)
     return new_gyro
 
-def LoadFlow(path):
-    file_names = sorted(os.listdir(path))
-    file_path =[]
-    for n in file_names:
-        file_path.append(os.path.join(path, n))
-    return file_path, flow_utils.readFlow(file_path[0]).shape
+    
 
 def get_virtual_at_timestamp(virtual_queue, real_queue, time_stamp, time_start, quat_t_1 = None, sample_freq = None):
     if virtual_queue is None:

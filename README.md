@@ -11,6 +11,8 @@ Install other used packages:
 ```
 cd dvs
 pip install -r requirements.txt --ignore-installed
+# Install/update torchvision to access the bundled RAFT model
+pip install "torchvision>=0.13"
 ```
 
 ## Data Preparation
@@ -23,18 +25,16 @@ Demo of curve visualization:
 The **gyro/OIS curve visualization** can be found at *dvs/video/s_114_outdoor_running_trail_daytime/ControlCam_20200930_104820_real.jpg*.
 
 
-## FlowNet2 Preparation
-Note, we provide optical flow result of one test video in our Data Preparation. If you would like to generate them for all test videos, please follow [FlowNet2 official website](https://github.com/NVIDIA/flownet2-pytorch) and guide below. Otherwise, you can skip this section. 
+## Optical Flow Backend
+The project now relies on the RAFT implementation that ships with `torchvision` to generate optical flow. The wrapper in
+`dvs/flow/raft_wrapper.py` downloads the pre-trained weights automatically the first time you invoke training or inference. No
+manual compilation or `.flo` preprocessing is required any more.
 
-Note, FlowNet2 installation is tricky. Please use Python=3.6 and Pytorch=1.0.0. More details are [here](https://github.com/NVIDIA/flownet2-pytorch/issues/156) or contact us for any questions.
-
-Download FlowNet2 model *FlowNet2_checkpoint.pth.tar* [here](https://drive.google.com/file/d/1hF8vS6YeHkx3j2pfCeQqqZGwA_PJq_Da/view).  Move it under folder *dvs/flownet2*.
+Make sure your environment has a recent `torchvision` build (e.g., `pip install "torchvision>=0.13"`). When processing large
+sequences you can still export frames up front for faster access:
 ```
-python warp/read_write.py # video2frames
-cd flownet2
-bash install.sh # install package
-bash run.sh # generate optical flow file for dataset
-``` 
+python warp/read_write.py  # optional: converts videos to frame folders
+```
 
 ## Running Inference 
 ```
@@ -52,17 +52,10 @@ In *s_114_outdoor_running_trail_daytime.jpg*, the blue curve is the output of ou
 Download dataset for training and test [here](https://storage.googleapis.com/dataset_release/all.zip). 
 Uncompress *all.zip* and move *dataset_release* folder under the *dvs* folder.
 
-Follow FlowNet2 Preparation Section.
-```
-python warp/read_write.py --dir_path ./dataset_release # video2frames
-cd flownet2
-bash run_release.sh # generate optical flow file for dataset
-``` 
-
 Run training code.
 ```
 python train.py
-``` 
+```
 The model is saved in *checkpoint/stabilzation_train*.
 
 ## Citation 

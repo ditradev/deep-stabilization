@@ -15,6 +15,7 @@ from model import Model
 import datetime
 import copy
 from util import make_dir, get_optimizer, AverageMeter, save_train_info, norm_flow
+from flow import RAFTFlowEstimator
 from gyro import torch_QuaternionProduct, torch_QuaternionReciprocal, torch_norm_quat
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
@@ -218,6 +219,10 @@ def train(args = None):
 
     print("-----------Load Dataset----------")
     train_loader, test_loader = get_data_loader(cf, no_flo = False)
+    flow_device = "cuda" if USE_CUDA and torch.cuda.is_available() else "cpu"
+    flow_model = RAFTFlowEstimator(device=flow_device)
+    train_loader.dataset.set_flow_wrapper(flow_model)
+    test_loader.dataset.set_flow_wrapper(flow_model)
 
     print("----------Start Training----------")
     currentDT = datetime.datetime.now()
