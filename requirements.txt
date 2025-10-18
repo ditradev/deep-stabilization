@@ -1,22 +1,18 @@
-# Core deep learning stack
-torch>=2.2,<2.3
-torchvision>=0.17,<0.18
-torchaudio>=2.2,<2.3
 
-# Array and scientific utilities
-numpy>=1.23
-scipy>=1.10
-opencv-python>=4.8
-imageio>=2.25
-pillow>=9.4
-
-# Visualization and logging
-matplotlib>=3.7
-tensorboardX>=2.6
-tqdm>=4.66
+torch>=2.2
+torchvision>=0.17
+# Optional audio components install cleanly alongside torch 2.2 wheels
+# and simplify CUDA compatibility across platforms.
+torchaudio>=2.2
 colorama>=0.4.6
-
-# Miscellaneous helpers
-PyYAML>=6.0
-pytz>=2023.3
 ffmpeg-python>=0.2.0
+imageio>=2.31
+matplotlib>=3.7
+numpy>=1.24
+opencv-contrib-python>=4.9
+Pillow>=10.0
+pytz>=2023.3
+PyYAML>=6.0
+scipy>=1.10
+tensorboardX>=2.6
+tqdm>=4.65
